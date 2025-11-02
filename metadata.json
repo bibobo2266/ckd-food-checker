@@ -1,0 +1,5 @@
+{
+  "name": "CKD Food Checker",
+  "description": "A mobile-first web app to help Chronic Kidney Disease (CKD) patients check if a food or supplement is safe for them based on a 12-metric evaluation. It uses large text and a high-contrast, card-based layout for older users.",
+  "requestFramePermissions": []
+}
