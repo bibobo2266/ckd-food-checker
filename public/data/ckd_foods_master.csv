@@ -4718,5 +4718,5 @@ source,food_id,name_local,name_en,lang,category,serving_basis,energy_kcal,protei
 ,F009766,"Zucchini, golden, fresh, unpeeled, raw","Zucchini, golden, fresh, unpeeled, raw",en-AU,24702.0,100g,19.0,2.2,34.0,230.0,1.0,from kJ
 ,F009765,"Zucchini, golden, fresh, unpeeled, fried, no added fat","Zucchini, golden, fresh, unpeeled, fried, no added fat",en-AU,24702.0,100g,27.0,3.1,48.0,328.0,1.0,from kJ
 ,F009764,"Zucchini, golden, fresh, unpeeled, boiled, drained","Zucchini, golden, fresh, unpeeled, boiled, drained",en-AU,24702.0,100g,22.0,2.6,36.0,246.0,1.0,from kJ
-,tw-tfda-2024,tw_luroufan_001,滷肉飯,Lu Rou Fan,zh-TW,飯類,100g,210,6,180,150,650,"braised pork rice (TW); high sodium; estimated, refine later"
+,tw_luroufan_001,滷肉飯,,zh-TW,飯類,100g,210,6,180,150,650,
 
