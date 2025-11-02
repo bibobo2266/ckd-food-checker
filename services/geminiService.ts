@@ -1,7 +1,10 @@
+import { findLocalFood } from './localFoodDb';
+
 // services/geminiService.ts
 // v5 – USDA supports labelNutrients (for branded / flavored items)
 import { Flag } from '../types';
 import type { FoodData } from '../types';
+
 
 const LOCAL_TEMPLATES = {
   fruit_generic: { name: 'Generic fruit', protein: 0.8, phosphorus: 20, potassium: 150, sodium: 2 },
@@ -294,13 +297,43 @@ export const fetchFoodData = async (foodQuery: string, uiLang: string): Promise<
     return buildCkdPanel(LOCAL_TEMPLATES.veg, uiLang, 'local-empty');
   }
 
-  // 1) USDA first
-  const usda = await fetchFromUSDA(q);
-  if (usda) {
-    return buildCkdPanel(usda, uiLang, 'usda');
+  // 0) try local Asia CSV first
+  try {
+    const localHit = await findLocalFood(q);
+    if (localHit) {
+      return buildCkdPanel(
+        {
+          name: localHit.name,
+          protein: localHit.protein,
+          phosphorus: localHit.phosphorus,
+          potassium: localHit.potassium,
+          sodium: localHit.sodium,
+        },
+        uiLang,
+        localHit.source || 'local-asia',
+      );
+    }
+  } catch (e) {
+    console.warn('[ckd] local CSV lookup failed:', e);
   }
 
-  // 2) fallback by keyword
+  // 1) try USDA
+  const usda = await fetchFromUSDA(q);
+  if (usda) {
+    return buildCkdPanel(
+      {
+        name: usda.name,
+        protein: usda.protein,
+        phosphorus: usda.phosphorus,
+        potassium: usda.potassium,
+        sodium: usda.sodium,
+      },
+      uiLang,
+      'usda',
+    );
+  }
+
+  // 2) fallback template
   const lower = q.toLowerCase();
   let tpl = LOCAL_TEMPLATES.veg;
   if (lower.includes('milk') || lower.includes('奶')) tpl = LOCAL_TEMPLATES.milk_whole;
