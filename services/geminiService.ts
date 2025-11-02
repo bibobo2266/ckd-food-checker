@@ -1,5 +1,5 @@
 // services/geminiService.ts
-// v4 – USDA parser fixed for nested nutrient structure
+// v5 – USDA supports labelNutrients (for branded / flavored items)
 import { Flag } from '../types';
 import type { FoodData } from '../types';
 
@@ -35,17 +35,17 @@ const SAFETY: Record<string, string[]> = {
   ],
   'fr': [
     'Basé sur 100 g. Adaptez à votre portion.',
-    'En cas de restriction K/P, consulter votre diététicien(ne) rénal(e).',
+    'En cas de restriction K/P, consultez votre diététicien(ne).',
     "Ceci n'est pas un avis médical.",
   ],
   'th': [
     'อ้างอิง 100 กรัม กรุณาปรับตามปริมาณที่ทานจริง',
-    'หากต้องจำกัดโพแทสเซียมหรือฟอสฟอรัส โปรดปรึกษาผู้เชี่ยวชาญ',
-    'ผลลัพธ์นี้ไม่ใช่คำแนะนำทางการแพทย์',
+    'ถ้าต้องจำกัดโพแทสเซียมหรือฟอสฟอรัส ให้ปรึกษาผู้เชี่ยวชาญ',
+    'ไม่ใช่คำแนะนำทางการแพทย์',
   ],
   'id': [
     'Berdasarkan 100 g. Sesuaikan dengan porsi Anda.',
-    'Kalau ada batas kalium/fosfor, konsultasi dulu.',
+    'Kalau ada batas K/P, konsultasikan dulu.',
     'Ini bukan nasihat medis.',
   ],
 };
@@ -57,20 +57,28 @@ function getSafety(lang: string) {
 const USDA_SEARCH_URL = 'https://api.nal.usda.gov/fdc/v1/foods/search';
 const USDA_FOOD_URL = 'https://api.nal.usda.gov/fdc/v1/food/';
 
+// helper: read labelNutrients if present
+function readFromLabelNutrients(labelNutrients: any) {
+  if (!labelNutrients) return {};
+  return {
+    protein: labelNutrients.protein ? Number(labelNutrients.protein.value || 0) : 0,
+    phosphorus: labelNutrients.phosphorus ? Number(labelNutrients.phosphorus.value || 0) : 0,
+    potassium: labelNutrients.potassium ? Number(labelNutrients.potassium.value || 0) : 0,
+    sodium: labelNutrients.sodium ? Number(labelNutrients.sodium.value || 0) : 0,
+  };
+}
+
 // ---- nutrient numbers (USDA) ----
 // 203 = Protein
 // 305 = Phosphorus
 // 306 = Potassium
 // 307 = Sodium
-
-function pickNutrient(n: any, wantedLower: string) {
-  // case 1: flat
+function pickNutrientByName(n: any, wantedLower: string) {
   if (n.nutrientName && typeof n.nutrientName === 'string') {
     if (n.nutrientName.toLowerCase().includes(wantedLower)) {
       return Number(n.value ?? n.amount ?? 0);
     }
   }
-  // case 2: nested { nutrient: { name, number }, amount }
   if (n.nutrient && typeof n.nutrient.name === 'string') {
     if (n.nutrient.name.toLowerCase().includes(wantedLower)) {
       return Number(n.amount ?? n.value ?? 0);
@@ -121,37 +129,35 @@ async function fetchFromUSDA(name: string): Promise<null | {
     return null;
   }
   const foodJson = await foodResp.json();
+
+  // --- A. try labelNutrients first (branded / flavored)
+  const ln = readFromLabelNutrients(foodJson.labelNutrients);
+  let protein = ln.protein || 0;
+  let phosphorus = ln.phosphorus || 0;
+  let potassium = ln.potassium || 0;
+  let sodium = ln.sodium || 0;
+
+  // --- B. then try foodNutrients (generic)
   const nutrients: any[] = foodJson.foodNutrients || [];
-
-  let protein = 0;
-  let phosphorus = 0;
-  let potassium = 0;
-  let sodium = 0;
-
   for (const n of nutrients) {
-    // try by name
-    const p1 = pickNutrient(n, 'protein');
+    const p1 = pickNutrientByName(n, 'protein');
     if (p1 !== null && protein === 0) protein = p1;
 
-    const p2 = pickNutrient(n, 'phosphorus');
+    const p2 = pickNutrientByName(n, 'phosphorus');
     if (p2 !== null && phosphorus === 0) phosphorus = p2;
 
-    const p3 = pickNutrient(n, 'potassium');
+    const p3 = pickNutrientByName(n, 'potassium');
     if (p3 !== null && potassium === 0) potassium = p3;
 
-    const p4 = pickNutrient(n, 'sodium');
+    const p4 = pickNutrientByName(n, 'sodium');
     if (p4 !== null && sodium === 0) sodium = p4;
 
-    // try by nutrient number (more reliable)
     const pn = pickNutrientByNumber(n, '203');
     if (pn !== null && protein === 0) protein = pn;
-
     const phn = pickNutrientByNumber(n, '305');
     if (phn !== null && phosphorus === 0) phosphorus = phn;
-
     const kkn = pickNutrientByNumber(n, '306');
     if (kkn !== null && potassium === 0) potassium = kkn;
-
     const sn = pickNutrientByNumber(n, '307');
     if (sn !== null && sodium === 0) sodium = sn;
   }
@@ -164,9 +170,8 @@ async function fetchFromUSDA(name: string): Promise<null | {
     sodium,
   });
 
-  // if all 0, we consider this a miss
   if (protein === 0 && phosphorus === 0 && potassium === 0 && sodium === 0) {
-    console.warn('[ckd] USDA returned but had no usable nutrients → fallback');
+    console.warn('[ckd] USDA returned but all 0 → will fallback');
     return null;
   }
 
@@ -194,14 +199,14 @@ function buildCkdPanel(
       flag: base.phosphorus > 250 ? Flag.LIMIT : base.phosphorus > 150 ? Flag.CAUTION : Flag.OK,
       explanation:
         lang === 'zh-TW'
-          ? '磷會隨著腎功能下降而堆積，請控制份量。'
-          : 'Phosphorus can accumulate in CKD, watch the portion.',
+          ? '磷會隨腎功能下降而堆積，請控制份量。'
+          : 'Phosphorus can build up in CKD, control the portion.',
     },
     {
       label: 'Phosphorus-to-protein ratio (mg/g)',
       value: `${pPerG}`,
       flag: typeof pPerG === 'number' && pPerG > 15 ? Flag.CAUTION : Flag.OK,
-      explanation: 'Lower P per gram protein is preferred for CKD.',
+      explanation: 'Lower phosphorus per gram of protein is better for CKD.',
     },
     {
       label: 'Potassium (mg)',
@@ -213,13 +218,13 @@ function buildCkdPanel(
       label: 'Sodium (mg)',
       value: `${base.sodium}`,
       flag: base.sodium > 300 ? Flag.CAUTION : Flag.OK,
-      explanation: 'Sodium affects BP and fluid balance.',
+      explanation: 'Sodium affects blood pressure and fluid.',
     },
     {
       label: 'Purine content',
       value: 'N/A',
       flag: Flag.CAUTION,
-      explanation: 'Purine not provided; if uric acid is high, use smaller portions.',
+      explanation: 'Purine not specified. If uric acid is high, limit.',
     },
     {
       label: 'PRAL score',
@@ -231,7 +236,7 @@ function buildCkdPanel(
       label: 'Digestibility / NPU',
       value: 'N/A',
       flag: Flag.OK,
-      explanation: 'No specific digestibility issue identified.',
+      explanation: 'No specific digestibility concern identified.',
     },
     {
       label: 'Nitrogen burden / renal load',
@@ -243,25 +248,25 @@ function buildCkdPanel(
       label: 'Oxalate content',
       value: 'N/A',
       flag: Flag.OK,
-      explanation: 'Not a high-oxalate item.',
+      explanation: 'No oxalate concern reported.',
     },
     {
       label: 'Fluid / volume load',
       value: 'depends on portion',
       flag: Flag.OK,
-      explanation: 'Count liquid foods toward your daily fluid if restricted.',
+      explanation: 'Count liquid foods in daily fluid if restricted.',
     },
     {
       label: 'Processing level',
-      value: 'fresh / simple',
+      value: source === 'usda' ? 'processed / check additives' : 'fresh / simple',
       flag: Flag.OK,
-      explanation: 'Fresh/simple foods rarely have phosphate additives.',
+      explanation: 'For packaged foods, check for phosphate/potassium additives.',
     },
     {
       label: 'Kidney handling',
       value: 'generally acceptable in controlled portions',
       flag: Flag.OK,
-      explanation: 'Adjust to your labs, CKD stage, and phosphorous binders.',
+      explanation: 'Adjust to your CKD stage, labs, and diet plan.',
     },
   ];
 
@@ -273,7 +278,7 @@ function buildCkdPanel(
 
   return {
     foodName: base.name,
-    servingSize: '(Based on 100g)',
+    servingSize: '(Based on 100g serving from ' + source + ')',
     dataSource: source,
     overallFlag: worst,
     metrics,
@@ -282,30 +287,20 @@ function buildCkdPanel(
   };
 }
 
-// ---- public API ----
+// ---- public entry ----
 export const fetchFoodData = async (foodQuery: string, uiLang: string): Promise<FoodData> => {
   const q = foodQuery.trim();
   if (!q) {
     return buildCkdPanel(LOCAL_TEMPLATES.veg, uiLang, 'local-empty');
   }
 
-  // 1) try USDA first
+  // 1) USDA first
   const usda = await fetchFromUSDA(q);
   if (usda) {
-    return buildCkdPanel(
-      {
-        name: usda.name,
-        protein: usda.protein,
-        phosphorus: usda.phosphorus,
-        potassium: usda.potassium,
-        sodium: usda.sodium,
-      },
-      uiLang,
-      'usda',
-    );
+    return buildCkdPanel(usda, uiLang, 'usda');
   }
 
-  // 2) fallback to guessing template
+  // 2) fallback by keyword
   const lower = q.toLowerCase();
   let tpl = LOCAL_TEMPLATES.veg;
   if (lower.includes('milk') || lower.includes('奶')) tpl = LOCAL_TEMPLATES.milk_whole;
